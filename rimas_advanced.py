@@ -70,10 +70,11 @@ def process_file(path, exceptions, lang):
     records = []
     for w in words:
         lw = w.lower()
-        if exceptions and lw in exceptions: continue
+        if exceptions and lw in exceptions:
+            continue
         key = get_rhyme_key(lw, lang)
         if key:
-            records.append({'song':song,'artist':artist,'rhyme_key':key,'word':lw})
+            records.append({'song': song, 'artist': artist, 'rhyme_key': key, 'word': lw})
     return records
 
 
@@ -83,68 +84,99 @@ def compute_stats(df):
     mean = grp.mean() if total else 0
     mx = grp.max() if total else 0
     top = grp.nlargest(10).items()
-    return {'total_groups':total,'mean_size':mean,'max_size':mx,'top10':list(top)}
+    return {'total_groups': total, 'mean_size': mean, 'max_size': mx, 'top10': list(top)}
 
 
 def plot_group_distribution(df):
     grp = df.groupby('rhyme_key')['word'].count()
-    fig,ax = plt.subplots()
-    ax.hist(grp.values, bins=range(1, grp.max()+2))
+    fig, ax = plt.subplots()
+    ax.hist(grp.values, bins=range(1, grp.max() + 2))
     ax.set(xlabel='Tamaño de grupo', ylabel='Número de grupos', title='Distribución de rimas')
     fig.tight_layout()
     return fig
 
 
-def export_to_excel(df, stats, fig, out):
-    writer = pd.ExcelWriter(out, engine='xlsxwriter')
+def export_to_excel(df, stats, fig, out_path):
+    writer = pd.ExcelWriter(out_path, engine='xlsxwriter')
     df.to_excel(writer, 'Data', index=False)
     ws = writer.sheets['Data']
-    ws.freeze_panes(1,0)
-    for i,col in enumerate(df.columns): ws.set_column(i,i,max(df[col].astype(str).map(len).max(),len(col))+2)
+    ws.freeze_panes(1, 0)
+    for i, col in enumerate(df.columns):
+        ws.set_column(i, i, max(df[col].astype(str).map(len).max(), len(col)) + 2)
     ss = writer.book.add_worksheet('Stats')
-    writer.sheets['Stats']=ss
-    r=0
-    for k,v in stats.items():
-        if k!='top10': ss.write(r,0,k); ss.write(r,1,v); r+=1
-    ss.write(r,0,'Top 10')
-    for i,(k,v) in enumerate(stats['top10'],start=r+1): ss.write(i,0,k); ss.write(i,1,v)
-    img=BytesIO(); fig.savefig(img,format='png'); ss.insert_image(r,3,'',{'image_data':BytesIO(img.getvalue())})
+    writer.sheets['Stats'] = ss
+    row = 0
+    for k, v in stats.items():
+        if k != 'top10':
+            ss.write(row, 0, k)
+            ss.write(row, 1, v)
+            row += 1
+    ss.write(row, 0, 'Top 10')
+    for i, (k, v) in enumerate(stats['top10'], start=row + 1):
+        ss.write(i, 0, k)
+        ss.write(i, 1, v)
+    img = BytesIO()
+    fig.savefig(img, format='png')
+    ss.insert_image(row, 3, '', {'image_data': BytesIO(img.getvalue())})
     writer.close()
 
-# --- CLI mode ---
-if not USE_STREAMLIT:
+# --- CLI Main ---
+def cli_main():
     import argparse
-    p=argparse.ArgumentParser(description='Analiza rimas múltiples')
-    p.add_argument('files',nargs='+',help='TXT con letra song - artist.txt')
-    p.add_argument('-e','--exceptions',help='TXT de excepciones')
-    p.add_argument('-o','--output_csv',default='all_rimas.csv')
-    p.add_argument('-x','--output_excel',nargs='?',const='all_rimas.xlsx')
-    p.add_argument('-l','--lang',choices=['es','en'],default='es')
-    a=p.parse_args()
-    exc=load_exceptions(a.exceptions) if a.exceptions else set()
-    recs=[]
-    for f in a.files: recs+=process_file(f,exc,a.lang)
-    df=pd.DataFrame(recs)
-    df.to_csv(a.output_csv,index=False,encoding='utf-8-sig'); logger.info(f'CSV {a.output_csv}')
-    stats=compute_stats(df); fig=plot_group_distribution(df)
-    if a.output_excel: export_to_excel(df,stats,fig,a.output_excel); logger.info(f'Excel {a.output_excel}')
-# --- Streamlit mode ---
-else:
+    p = argparse.ArgumentParser(description='Analiza rimas múltiples')
+    p.add_argument('files', nargs='+', help='TXT con letra song - artist.txt')
+    p.add_argument('-e', '--exceptions', help='TXT de excepciones')
+    p.add_argument('-o', '--output_csv', default='all_rimas.csv')
+    p.add_argument('-x', '--output_excel', nargs='?', const='all_rimas.xlsx')
+    p.add_argument('-l', '--lang', choices=['es', 'en'], default='es')
+    args = p.parse_args()
+
+    exceptions = load_exceptions(args.exceptions) if args.exceptions else set()
+    records = []
+    for f in args.files:
+        records.extend(process_file(f, exceptions, args.lang))
+    df = pd.DataFrame(records)
+    df.to_csv(args.output_csv, index=False, encoding='utf-8-sig')
+    logger.info(f'CSV generado: {args.output_csv}')
+    stats = compute_stats(df)
+    fig = plot_group_distribution(df)
+    if args.output_excel:
+        export_to_excel(df, stats, fig, args.output_excel)
+        logger.info(f'Excel generado: {args.output_excel}')
+
+# --- Streamlit App ---
+def streamlit_app():
     st.title('Análisis de rimas múltiples')
-    uploaded=st.file_uploader('Sube letras (.txt)',accept_multiple_files=True)
-    exc_path=st.sidebar.file_uploader('Excepciones (.txt)')
-    lang=st.sidebar.selectbox('Idioma',['es','en'])
+    uploaded = st.file_uploader('Sube letras (.txt)', accept_multiple_files=True)
+    exc_file = st.sidebar.file_uploader('Excepciones (.txt)')
+    lang = st.sidebar.selectbox('Idioma', ['es', 'en'])
     if uploaded:
-        exc=set()
-        if exc_path: exc={l.strip().lower() for l in exc_path.getvalue().decode('utf-8').splitlines() if l.strip()}
-        recs=[]
+        exceptions = set()
+        if exc_file:
+            exceptions = {l.strip().lower() for l in exc_file.read().decode('utf-8').splitlines() if l.strip()}
+        records = []
         for u in uploaded:
-            tmp=u.name; open(tmp,'wb').write(u.read())
-            recs+=process_file(tmp,exc,lang)
-        df=pd.DataFrame(recs)
+            tmp = u.name
+            with open(tmp, 'wb') as f:
+                f.write(u.read())
+            records.extend(process_file(tmp, exceptions, lang))
+        df = pd.DataFrame(records)
         if not df.empty:
             st.dataframe(df)
-            stats=compute_stats(df); st.json(stats)
-            fig=plot_group_distribution(df); st.pyplot(fig)
-            buf=BytesIO(); df.to_csv(buf,index=False,encoding='utf-8-sig'); st.download_button('CSV',buf.getvalue(), 'all_rimas.csv')
-            eb=BytesIO(); export_to_excel(df,stats,fig,eb); st.download_button('Excel',eb.getvalue(),'all_rimas.xlsx')
+            stats = compute_stats(df)
+            st.json(stats)
+            fig = plot_group_distribution(df)
+            st.pyplot(fig)
+            csv_buf = BytesIO()
+            df.to_csv(csv_buf, index=False, encoding='utf-8-sig')
+            st.download_button('Descargar CSV', csv_buf.getvalue(), 'all_rimas.csv')
+            excel_buf = BytesIO()
+            export_to_excel(df, stats, fig, excel_buf)
+            st.download_button('Descargar Excel', excel_buf.getvalue(), 'all_rimas.xlsx')
+
+# --- Entry Point ---
+if __name__ == '__main__':
+    if USE_STREAMLIT:
+        streamlit_app()
+    else:
+        cli_main()
