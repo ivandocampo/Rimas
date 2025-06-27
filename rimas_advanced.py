@@ -14,6 +14,12 @@ try:
 except ImportError:
     pronouncing = None
 
+try:
+    import streamlit as st
+    USE_STREAMLIT = True
+except ImportError:
+    USE_STREAMLIT = False
+
 def is_streamlit():
     # Detecta si el script se está ejecutando bajo Streamlit
     return any('streamlit' in arg for arg in sys.argv)
