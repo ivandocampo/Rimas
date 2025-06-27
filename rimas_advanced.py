@@ -18,9 +18,11 @@ except ImportError:
 # Try importing Streamlit for GUI
 try:
     import streamlit as st
-    USE_STREAMLIT = True
 except ImportError:
-    USE_STREAMLIT = False
+    st = None
+
+# Detect running under Streamlit by server port env
+USE_STREAMLIT = st is not None and 'STREAMLIT_SERVER_PORT' in os.environ
 
 # Configure logging
 logging.basicConfig(
