@@ -1,4 +1,3 @@
-import argparse
 import re
 import sys
 import logging
@@ -9,19 +8,13 @@ from io import BytesIO
 import pandas as pd
 import matplotlib.pyplot as plt
 
-# Try importing pronunciation tools
+# Pronunciation support
 try:
     import pronouncing
 except ImportError:
     pronouncing = None
 
-# Try importing Streamlit for GUI
-try:
-    import streamlit as st
-except ImportError:
-    st = None
-
-# Try importing Streamlit for GUI
+# Streamlit support
 try:
     import streamlit as st
     USE_STREAMLIT = True
@@ -35,208 +28,123 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# --- Core functionality ---
+# --- Core functions ---
 
 def get_rhyme_key(word, lang='es'):
-    """
-    Devuelve la clave de rima asonante de una palabra.
-    - Para 'en', usa CMUdict (pronouncing).
-    - Para otros idiomas, aplica reglas de español.
-    """
     w = word.lower()
     if lang == 'en' and pronouncing:
         phones = pronouncing.phones_for_word(w)
         if phones:
             phonemes = phones[0].split()
-            stress_idxs = [i for i, p in enumerate(phonemes) if p[-1] in '12']
-            idx = stress_idxs[-1] if stress_idxs else len(phonemes) - 1
+            stress = [i for i, p in enumerate(phonemes) if p[-1] in '12']
+            idx = stress[-1] if stress else len(phonemes)-1
             return ''.join(phonemes[idx:])
-    # Regla español fallback
     orig = w
-    trans = str.maketrans("áéíóúü", "aeiouu")
-    norm = orig.translate(trans)
-    vowel_positions = [m.start() for m in re.finditer(r"[aeiou]", norm)]
-    if not vowel_positions:
+    norm = orig.translate(str.maketrans("áéíóúü", "aeiouu"))
+    vowels = re.findall(r"[aeiou]", norm)
+    if not vowels:
         return ''
-    for i, ch in enumerate(orig):
-        if ch in 'áéíóú':
-            stress_idx = i
-            break
-    else:
-        if orig[-1] in 'aeiouns':
-            stress_idx = vowel_positions[-2] if len(vowel_positions) >= 2 else vowel_positions[-1]
-        else:
-            stress_idx = vowel_positions[-1]
-    substring = norm[stress_idx:]
-    return ''.join(re.findall(r"[aeiou]", substring))
+    return ''.join(vowels[-2:] if len(vowels)>=2 else vowels)
 
 
 def load_exceptions(path):
-    """
-    Carga lista de palabras a excluir desde un TXT.
-    """
     try:
         with open(path, encoding='utf-8') as f:
-            return {line.strip().lower() for line in f if line.strip()}
+            return {l.strip().lower() for l in f if l.strip()}
     except Exception as e:
-        logger.warning(f"No se pudo leer excepciones: {e}")
+        logger.warning(f"Error leyendo excepciones: {e}")
         return set()
 
 
 def process_file(path, exceptions, lang):
-    """
-    Procesa un archivo de letra (.txt), devuelve lista de registros.
-    """
     base = os.path.splitext(os.path.basename(path))[0]
-    parts = [p.strip() for p in base.split(' - ', 1)]
-    if len(parts) == 2:
-        song, artist = parts
-    else:
-        song, artist = base, ''
+    parts = base.split(' - ', 1)
+    song = parts[0]
+    artist = parts[1] if len(parts)==2 else ''
     try:
-        with open(path, encoding='utf-8') as f:
-            text = f.read()
+        text = open(path, encoding='utf-8').read()
     except Exception as e:
-        logger.error(f"Error leyendo {path}: {e}")
+        logger.error(f"No se puede leer {path}: {e}")
         return []
-    clean = re.sub(r"[^\w\sáéíóúüñÁÉÍÓÚÜÑ]", "", text)
-    words = clean.split()
+    words = re.findall(r"[\wáéíóúüñÁÉÍÓÚÜÑ]+", text)
     records = []
     for w in words:
         lw = w.lower()
-        if lw in exceptions:
-            continue
+        if exceptions and lw in exceptions: continue
         key = get_rhyme_key(lw, lang)
         if key:
-            records.append({'song': song, 'artist': artist,
-                             'rhyme_key': key, 'word': lw})
+            records.append({'song':song,'artist':artist,'rhyme_key':key,'word':lw})
     return records
 
 
 def compute_stats(df):
-    """
-    Calcula estadísticas sobre el DataFrame combinado.
-    """
     grp = df.groupby('rhyme_key')['word'].count()
-    total = grp.size
-    mean_size = grp.mean() if total else 0
-    max_size = grp.max() if total else 0
-    top10 = grp.sort_values(ascending=False).head(10).items()
-    return {'total_groups': total,
-            'mean_size': mean_size,
-            'max_size': max_size,
-            'top10': list(top10)}
+    total = len(grp)
+    mean = grp.mean() if total else 0
+    mx = grp.max() if total else 0
+    top = grp.nlargest(10).items()
+    return {'total_groups':total,'mean_size':mean,'max_size':mx,'top10':list(top)}
 
 
 def plot_group_distribution(df):
-    """
-    Histograma de tamaños de grupos combinados.
-    """
     grp = df.groupby('rhyme_key')['word'].count()
-    sizes = grp.values
-    fig, ax = plt.subplots()
-    ax.hist(sizes, bins=range(1, sizes.max() + 2))
-    ax.set_xlabel('Tamaño de grupo')
-    ax.set_ylabel('Número de grupos')
-    ax.set_title('Distribución de tamaños de grupos de rima')
+    fig,ax = plt.subplots()
+    ax.hist(grp.values, bins=range(1, grp.max()+2))
+    ax.set(xlabel='Tamaño de grupo', ylabel='Número de grupos', title='Distribución de rimas')
     fig.tight_layout()
     return fig
 
 
-def export_to_excel(df, stats, fig, out_path):
-    """
-    Exporta a Excel: hoja 'Data', hoja 'Stats' con gráfico.
-    """
-    with pd.ExcelWriter(out_path, engine='xlsxwriter') as writer:
-        df.to_excel(writer, sheet_name='Data', index=False)
-        workbook = writer.book
-        data_ws = writer.sheets['Data']
-        data_ws.freeze_panes(1, 0)
-        for i, col in enumerate(df.columns):
-            width = max(df[col].astype(str).map(len).max(), len(col)) + 2
-            data_ws.set_column(i, i, width)
-        stats_ws = workbook.add_worksheet('Stats')
-        writer.sheets['Stats'] = stats_ws
-        row = 0
-        for k, v in stats.items():
-            if k != 'top10':
-                stats_ws.write(row, 0, k)
-                stats_ws.write(row, 1, v)
-                row += 1
-        stats_ws.write(row, 0, 'Top 10')
-        for i, (key, count) in enumerate(stats['top10'], start=row+1):
-            stats_ws.write(i, 0, key)
-            stats_ws.write(i, 1, count)
-        chart_buf = BytesIO()
-        fig.savefig(chart_buf, format='png')
-        stats_ws.insert_image(row, 3, 'chart.png', {'image_data': BytesIO(chart_buf.getvalue())})
+def export_to_excel(df, stats, fig, out):
+    writer = pd.ExcelWriter(out, engine='xlsxwriter')
+    df.to_excel(writer, 'Data', index=False)
+    ws = writer.sheets['Data']
+    ws.freeze_panes(1,0)
+    for i,col in enumerate(df.columns): ws.set_column(i,i,max(df[col].astype(str).map(len).max(),len(col))+2)
+    ss = writer.book.add_worksheet('Stats')
+    writer.sheets['Stats']=ss
+    r=0
+    for k,v in stats.items():
+        if k!='top10': ss.write(r,0,k); ss.write(r,1,v); r+=1
+    ss.write(r,0,'Top 10')
+    for i,(k,v) in enumerate(stats['top10'],start=r+1): ss.write(i,0,k); ss.write(i,1,v)
+    img=BytesIO(); fig.savefig(img,format='png'); ss.insert_image(r,3,'',{'image_data':BytesIO(img.getvalue())})
+    writer.close()
 
-
-# --- CLI Entry Point ---
-
-def cli_main():
-    p = argparse.ArgumentParser(
-        description="Agrupa varios archivos por rima, genera un CSV/Excel y estadísticas."
-    )
-    p.add_argument('input_txts', nargs='+', help='Ficheros .txt con las letras')
-    p.add_argument('-e', '--exceptions', help='Fichero de excepciones')
-    p.add_argument('-o', '--output_csv', default='all_rimas.csv', help='CSV combinado de salida')
-    p.add_argument('-x', '--output_excel', nargs='?', const='all_rimas.xlsx', help='Generar Excel combinado')
-    p.add_argument('-l', '--lang', choices=['es', 'en'], default='es', help='Idioma: es o en')
-    args = p.parse_args()
-
-    exceptions = load_exceptions(args.exceptions) if args.exceptions else set()
-    all_records = []
-    for path in args.input_txts:
-        all_records.extend(process_file(path, exceptions, lang=args.lang))
-    if not all_records:
-        logger.warning("No se detectaron registros.")
-    df = pd.DataFrame(all_records)
-    df.to_csv(args.output_csv, index=False, encoding='utf-8-sig')
-    logger.info(f"CSV generado: {args.output_csv}")
-
-    stats = compute_stats(df)
-    fig = plot_group_distribution(df)
-    if args.output_excel:
-        export_to_excel(df, stats, fig, args.output_excel)
-        logger.info(f"Excel generado: {args.output_excel}")
-
-
-if __name__ == '__main__':
-    if not USE_STREAMLIT:
-        cli_main()
-
-# --- Streamlit GUI ---
-if USE_STREAMLIT:
-    st.title("Análisis de rimas asonantes multiple")
-    st.sidebar.header("Opciones")
-    uploaded = st.file_uploader("Sube las letras (.txt)", type='txt', accept_multiple_files=True)
-    exc_file = st.sidebar.file_uploader("Sube excepciones (.txt)", type='txt')
-    lang = st.sidebar.selectbox('Idioma', ['es', 'en'])
+# --- CLI mode ---
+if not USE_STREAMLIT:
+    import argparse
+    p=argparse.ArgumentParser(description='Analiza rimas múltiples')
+    p.add_argument('files',nargs='+',help='TXT con letra song - artist.txt')
+    p.add_argument('-e','--exceptions',help='TXT de excepciones')
+    p.add_argument('-o','--output_csv',default='all_rimas.csv')
+    p.add_argument('-x','--output_excel',nargs='?',const='all_rimas.xlsx')
+    p.add_argument('-l','--lang',choices=['es','en'],default='es')
+    a=p.parse_args()
+    exc=load_exceptions(a.exceptions) if a.exceptions else set()
+    recs=[]
+    for f in a.files: recs+=process_file(f,exc,a.lang)
+    df=pd.DataFrame(recs)
+    df.to_csv(a.output_csv,index=False,encoding='utf-8-sig'); logger.info(f'CSV {a.output_csv}')
+    stats=compute_stats(df); fig=plot_group_distribution(df)
+    if a.output_excel: export_to_excel(df,stats,fig,a.output_excel); logger.info(f'Excel {a.output_excel}')
+# --- Streamlit mode ---
+else:
+    st.title('Análisis de rimas múltiples')
+    uploaded=st.file_uploader('Sube letras (.txt)',accept_multiple_files=True)
+    exc_path=st.sidebar.file_uploader('Excepciones (.txt)')
+    lang=st.sidebar.selectbox('Idioma',['es','en'])
     if uploaded:
-        exceptions = set()
-        if exc_file:
-            exceptions = {l.strip().lower() for l in exc_file.read().decode('utf-8').splitlines() if l.strip()}
-        all_records = []
-        for up in uploaded:
-            # Guardar temporalmente para usar process_file
-            with open(up.name, 'wb') as tmp:
-                tmp.write(up.read())
-            all_records.extend(process_file(up.name, exceptions, lang))
-        df = pd.DataFrame(all_records)
+        exc=set()
+        if exc_path: exc={l.strip().lower() for l in exc_path.getvalue().decode('utf-8').splitlines() if l.strip()}
+        recs=[]
+        for u in uploaded:
+            tmp=u.name; open(tmp,'wb').write(u.read())
+            recs+=process_file(tmp,exc,lang)
+        df=pd.DataFrame(recs)
         if not df.empty:
-            st.subheader("Datos de rimas")
             st.dataframe(df)
-            # Estadísticas
-            stats = compute_stats(df)
-            st.subheader("Estadísticas")
-            st.json(stats)
-            fig = plot_group_distribution(df)
-            st.pyplot(fig)
-            # Descarga CSV y Excel
-            csv_buf = BytesIO()
-            df.to_csv(csv_buf, index=False, encoding='utf-8-sig')
-            st.download_button("Descargar CSV", data=csv_buf.getvalue(), file_name="all_rimas.csv")
-            excel_buf = BytesIO()
-            export_to_excel(df, stats, fig, excel_buf)
-            st.download_button("Descargar Excel", data=excel_buf.getvalue(), file_name="all_rimas.xlsx")
+            stats=compute_stats(df); st.json(stats)
+            fig=plot_group_distribution(df); st.pyplot(fig)
+            buf=BytesIO(); df.to_csv(buf,index=False,encoding='utf-8-sig'); st.download_button('CSV',buf.getvalue(), 'all_rimas.csv')
+            eb=BytesIO(); export_to_excel(df,stats,fig,eb); st.download_button('Excel',eb.getvalue(),'all_rimas.xlsx')
