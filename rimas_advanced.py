@@ -203,8 +203,13 @@ def cli_main():
         logger.info(f"Excel generado: {args.output_excel}")
 
 
-if __name__ == '__main__' and not USE_STREAMLIT:
-    cli_main()
+if __name__ == "__main__":
+    import sys
+    # Si se ejecuta con Streamlit, NO ejecutes el CLI
+    if "streamlit" in sys.argv[0]:
+        pass  # No hagas nada, Streamlit ya gestiona la ejecución
+    else:
+        cli_main()  # O el nombre de tu función principal para CLI
 
 # --- Streamlit GUI ---
 if USE_STREAMLIT:
