@@ -18,9 +18,11 @@ except ImportError:
 try:
     import streamlit as st
     USE_STREAMLIT = True
+    print("Streamlit successfully imported. USE_STREAMLIT is True.") # Added for debugging
 except ImportError:
     st = None
     USE_STREAMLIT = False
+    print("Streamlit not imported. USE_STREAMLIT is False.") # Added for debugging
 
 # Configure logging
 logging.basicConfig(
@@ -176,6 +178,7 @@ def streamlit_app():
 
 # --- Entry Point ---
 if __name__ == '__main__':
+    print(f"Inside __main__ block. USE_STREAMLIT is {USE_STREAMLIT}") # Added for debugging
     if USE_STREAMLIT:
         streamlit_app()
     else:
