@@ -14,8 +14,11 @@ try:
 except ImportError:
     pronouncing = None
 
-# Try importing Streamlit for GUI
-USE_STREAMLIT = '--gui' in sys.argv
+def is_streamlit():
+    # Detecta si el script se está ejecutando bajo Streamlit
+    return any('streamlit' in arg for arg in sys.argv)
+
+USE_STREAMLIT = is_streamlit()
 if USE_STREAMLIT:
     try:
         import streamlit as st
@@ -204,12 +207,10 @@ def cli_main():
 
 
 if __name__ == "__main__":
-    import sys
-    # Si se ejecuta con Streamlit, NO ejecutes el CLI
-    if "streamlit" in sys.argv[0]:
-        pass  # No hagas nada, Streamlit ya gestiona la ejecución
+    if USE_STREAMLIT:
+        pass  # No ejecutes CLI, Streamlit gestiona la ejecución
     else:
-        cli_main()  # O el nombre de tu función principal para CLI
+        cli_main()
 
 # --- Streamlit GUI ---
 if USE_STREAMLIT:
